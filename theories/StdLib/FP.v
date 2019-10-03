@@ -812,7 +812,7 @@ Defined.
 
 Definition IsHProp_UrEq_nat_B {n n' e m m' e' X Y p p' e'' X' Y'}
            (Hm:m = p) (Hm' : m' = p')
-           (He : Hm # Hm' # e' = e'')
+           (He : (transport_eq (fun x => x = p') Hm (transport_eq (fun x => m = x) Hm' e')) = e'')
            (HX : Hm # X = X')
            (HY : Hm' # Y = Y')
            (B : UR_eq nat nat (eq nat) n n' e p p' e'' X' Y')
@@ -827,7 +827,7 @@ Defined.
 
 Definition IsHProp_UrEq_nat_gen {n n' e m m' e' X Y p p' e'' X' Y'}
            (Hm:m = p) (Hm' : m' = p')
-           (He : Hm # Hm' # e' = e'')
+           (He : (transport_eq (fun x => x = p') Hm (transport_eq (fun x => m = x) Hm' e')) = e'')
            (HX : Hm # X = X')
            (HY : Hm' # Y = Y')
            (A : UR_eq nat nat (eq nat) n n' e m m' e' X Y)
