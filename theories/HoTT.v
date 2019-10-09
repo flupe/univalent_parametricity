@@ -49,11 +49,11 @@ Notation id := (fun x => x).
 
 Notation compose := (fun g f x => g (f x)).
 
-Notation "g ∘ f" := (compose g%function f%function) (at level 1): function_scope.
+Notation "g ∘ f" := (compose g%function f%function) (at level 40, left associativity): function_scope.
 
 Notation "{ x : A & P }" := (sigT (A:=A) (fun x => P)) : type_scope.
-Notation "x .1" := (projT1 x) (at level 3).
-Notation "x .2" := (projT2 x) (at level 3).
+Notation "x .1" := (projT1 x) (at level 2, left associativity).
+Notation "x .2" := (projT2 x) (at level 2, left associativity).
 Notation " ( x ; p ) " := (existT _ x p).
 
 Notation "f == g" := (forall x, f x = g x) (at level 70).
@@ -110,7 +110,7 @@ Notation "p @ q" := (concat p q) (at level 20).
 Definition inverse {A : Type} {x y : A} (p : x = y) : y = x
     := match p with eq_refl => eq_refl end.
 
-Notation "p ^" := (inverse p) (at level 3, format "p '^'").
+Notation "p ^" := (inverse p) (at level 2, format "p '^'").
 
 Definition transportD {A : Type} (B : A -> Type) (C : forall a:A, B a -> Type)
   {x1 x2 : A} (p : x1 = x2) (y : B x1) (z : C x1 y)

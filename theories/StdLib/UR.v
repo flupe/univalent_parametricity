@@ -39,12 +39,13 @@ Inductive list (A : Type) : Type :=
 Arguments nil {_}.
 Arguments cons {_} _ _.
 
-Notation "[ ]" := nil (format "[ ]").
-Notation "[ x ]" := (cons x nil).
-Notation "[ x ; y ; .. ; z ]" := (cons x (cons y .. (cons z nil) ..)).
-Notation "[ x ; .. ; y ]" := (cons x .. (cons y nil) ..).
+Notation "[ ]" := nil (format "[ ]") : hott_list_scope.
+Notation "[ x ]" := (cons x nil) : hott_list_scope.
+Notation "[ x ; y ; .. ; z ]" := (cons x (cons y .. (cons z nil) ..)) : hott_list_scope.
 
-Infix "::" := cons (at level 60, right associativity). 
+Infix "::" := cons (at level 60, right associativity) : hott_list_scope. 
+
+Local Open Scope hott_list_scope.
 
 Inductive UR_list {A B} (R : A -> B -> Type) : list A -> list B -> Type :=
   UR_list_nil : UR_list R nil nil

@@ -3,6 +3,7 @@ Require Import UnivalentParametricity.theories.StdLib.Basics.
 
 Set Universe Polymorphism.
 
+Local Open Scope hott_list_scope.
 
 (*****************************)
 (* A library parametrized by the underlying size-aware container type *)

@@ -10,6 +10,8 @@ Unset Universe Minimization ToSet.
 
 Require Import UnivalentParametricity.theories.Basics UnivalentParametricity.theories.StdLib.UR Record.
 
+Local Open Scope hott_list_scope.
+
 (*! FP for Sigma !*)
 
 Definition exist_eq {A P} (a a': A) (l : P a) (l' : P a') (e : a = a') :
