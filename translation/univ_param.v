@@ -36,28 +36,44 @@ Definition with_default {A} (d : A) (x : option A) : A :=
 Local Existing Instance config.default_checker_flags.
 Local Existing Instance default_fuel.
 
-Fixpoint tsl_rec (fuel : nat) (Σ : global_env_ext) (Γ : context) (E : tsl_table) (t : term)
+Definition transport := tConst "UnivalentParametricity.theories.HoTT.univalent_transport" [].
+
+Fixpoint tsl_rec (fuel : nat) (Σ : global_env_ext) (Γ : context) (E : tsl_table) (t : term) {struct fuel}
     : tsl_result term :=
     match fuel with
     | O => raise NotEnoughFuel
     | S fuel =>
     match t with
     | tConst name univ =>
-        (* TODO: find body *)
+        (* TODO: find body if possible, otherwise it's an axiom *)
         ret (with_default t (lookup_tsl_table E (ConstRef name)))
     
     | tConstruct i name univ =>
         ret (with_default t (lookup_tsl_table E (ConstructRef i name)))
         
     | tLambda name typ val =>
-        tLambda name $> (tsl_rec fuel Σ Γ E typ) <*> (tsl_rec fuel Σ Γ E val)
+        typ' <- (tsl_rec fuel Σ Γ E typ) ;;
+        tLambda name typ' $> (tsl_rec fuel Σ (vass name typ' :: Γ) E val)
     
     | tApp fn args =>
-        tApp $> (tsl_rec fuel Σ Γ E fn) <*> (monad_map (tsl_rec fuel Σ Γ E) args)
-        (* match infer' Σ Γ term with
+        term <- tApp $> (tsl_rec fuel Σ Γ E fn) <*> (monad_map (tsl_rec fuel Σ Γ E) args) ;;
+        match infer' Σ Γ term with
         | Checked _ => ret term
-        | TypeError t => Error (TypingError t) (* TODO: lift to the correct type *)
-        end *)
+        | TypeError _ =>
+            (* if we cannot translate the terms with whitebox, use blackbox *)
+            match infer' Σ Γ t with
+            | Checked typ =>
+                (* infer type, translate type, then transport *)
+                typ' <- tsl_rec fuel Σ Γ E typ ;;
+                ret (tApp transport
+                    [ typ
+                    ; typ'
+                    (* in the following, I shouldn't be proving an empty list *)
+                    ; tApp (tInd (mkInd "UnivalentParametricity.theories.HoTT.Equiv" 0) []) [typ; typ']
+                    ; t])
+            | TypeError t => Error (TypingError t)
+            end
+        end
 
     | tInd ind u =>
         ret (with_default t (lookup_tsl_table E (IndRef ind)))
@@ -78,13 +94,13 @@ Fixpoint tsl_rec (fuel : nat) (Σ : global_env_ext) (Γ : context) (E : tsl_tabl
     end
     end.
 
-Definition poly (n : nat) : nat := pow n 42 + 5 * n.
 
 Notation inat := "Coq.Init.Datatypes.nat".
 Notation ibin := "Coq.Numbers.BinNums.N".
 
 Definition ind_nat := mkInd inat 0.
 Definition ind_bin := mkInd ibin 0.
+
 
 Definition nat_rule : tsl_table :=
     [ (ConstRef "Coq.Init.Nat.add", tConst "Coq.NArith.BinNatDef.N.add" [])
@@ -94,18 +110,37 @@ Definition nat_rule : tsl_table :=
     ; (ConstructRef ind_nat 0, tConstruct ind_bin 0 [])
     ].
 
-(* if I use default fuel, stack overflow *)
 
-Run TemplateProgram (
-    term <- tmQuote (fun (n : nat) => 0 * 0) ;;
-    tmPrint term ;;
-    let term' := (tsl_rec fuel (empty_ext []) [] nat_rule term) in
-    term' <- tmEval lazy term' ;; 
-    match term' with
-    | Error e =>
-        print_nf e;;
-        fail_nf "Translation error during the translation"
-    | Success term' =>
-        tmPrint term' ;;
-        tmUnquote term' >>= tmPrint
-    end).
+Definition convert {A} (x : A) :=
+    p <- tmQuoteRec x ;;
+
+    (* HACK: we fill in the global environment with some more stuff *)
+    t <- tmQuoteRec ((nat ≃ N), (plus ≈ N.add)) ;;
+
+    match (p, t) with
+    | ((env, term), (env', _)) =>
+        term' <- tmEval lazy (tsl_rec fuel (empty_ext (app env env')) [] nat_rule term);; 
+        match term' with
+        | Error e =>
+            print_nf e;;
+            fail_nf "Translation error during the translation"
+        | Success term' =>
+            tmPrint term' ;;
+            tmUnquote term' >>= tmPrint
+        end
+    end.
+
+
+Definition poly (n : nat) : nat := pow n 42 + 5 * n.
+
+
+(* Examples *)
+Run TemplateProgram (convert 0).
+Run TemplateProgram (convert (fun (x : nat) => x + 0)).
+
+
+(* The following fails because I do not know which arguments
+ * to give to HoTT.Equiv ;
+ * thus, we get "Anomaly Universe Var(0) undefined"
+ *)
+Run TemplateProgram (convert 3).
