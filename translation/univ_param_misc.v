@@ -3,7 +3,7 @@ From MetaCoq.Translations Require Import translation_utils.
 Import String MonadNotation List Lists.List.ListNotations.
 Require Import UnivalentParametricity.theories.Basics UnivalentParametricity.theories.StdLib.Basics.
 Require Import Coq.Init.Nat.
-Require Import NatBinDefs.
+Require Import NatBinDefs NatBinALC.
 Require Import BinInt BinNat Nnat.
 Import Template.Universes.Level.
 Require Import String.
@@ -17,22 +17,16 @@ Close Scope hott_list_scope.
 Open Scope list_scope.
 Open Scope string_scope.
 Open Scope nat_scope.
-
 Open Scope type_scope.
 
-Record TermRule := mkTermRule
-  { a : global_reference
-  ; b : term
-  ; ta : term
-  ; tb : term
-  ; witness : term
-  }.
-
+Fixpoint zip {A B : Type} (ta : Datatypes.list A) (tb : Datatypes.list B) : Datatypes.list (A * B) :=
+  match ta, tb with
+  | a :: ta, b :: tb => (a, b) :: zip ta tb
+  | _, _ => []
+  end.
 
 Record TslRes := mkRes
-  { trad : term (* the translated term         *)
-  ; t₁ : term   (* type of the source term     *)
-  ; t₂ : term   (* type of the translated term *)
+  { trad : term (* the translated term *)
   ; w  : term   (* witness of relation between the source and translated terms *)
                 (* if t : Type, then w : t ⋈ t'
                    otherwise, with t : A,  w : t ≈ t' : A ⋈ A'*)
@@ -60,7 +54,6 @@ Definition with_default {A} (d : A) (x : option A) : A :=
   | None => d
   end.
 
-
 Local Existing Instance config.default_checker_flags.
 Local Existing Instance default_fuel.
 
@@ -69,12 +62,23 @@ Definition UR_id (A : Type) : A ⋈ A.
 	apply Canonical_UR, Equiv_id.
 Defined.
 
-Print FP_forall_ur_type.
-Quote Definition f := @FP_forall_ur_type.
-Print f.
+Definition ur_id (A : Type) (x : A) : @ur A A (Ur (UR_id A)) x x.
+  pose (w := UR_id A).
+  pose (ur_coh x x).
+  unfold univalent_transport in e.
+  simpl ((equiv w) x) in e.
+  apply e.
+  reflexivity.
+Defined.
 
+(* HACK AHEAD *)
+Definition H4CK (a : term) :=
+  match a with
+  | tConst n u => tConst n (List.map (fun x => lSet) u)
+  | _ => a
+  end.
 
-Definition mkForallUR (A A' eA B B' eB: term) := tApp (<% FP_forall_ur_type %>) [A; A'; eA; B; B'; eB].
+Definition mkForallUR (A A' eA B B' eB: term) := tApp (H4CK <% FP_forall_ur_type %>) [A; A'; eA; B; B'; eB].
 
 Definition UR_apply (e a b: term) :=
   tApp (tProj ({| inductive_mind := "UnivalentParametricity.theories.UR.UR"
@@ -83,6 +87,9 @@ Definition UR_apply (e a b: term) :=
                        ; inductive_ind  := 0 |}, 2, 1)%core 
                      (e)))
        [a; b].
+
+Definition UR_equiv (e : term) :=
+  tProj ({| inductive_mind := "UnivalentParametricity.theories.UR.UR_Type"; inductive_ind  := 0 |}, 2, 0)%core (e).
 
 
 (* Utilities to provide correct by construction translation rules *)
@@ -118,6 +125,25 @@ Definition test : TranslationRule :=
 
 Run TemplateProgram (extract_type_rules (type_rules test)). *)
 
+Fixpoint tsl_rec0 (n : nat) (o : nat) (t : term) {struct t} : term :=
+  match t with
+  | tRel k => if Nat.leb n k then (* global variable *) tRel (3 * (k - n) + n + o)
+                        else (* local  variable *) t
+  | tEvar k ts      => tEvar k (List.map (tsl_rec0 n o) ts)
+  | tCast t c a     => tCast (tsl_rec0 n o t) c (tsl_rec0 n o a)
+  | tProd na A B  => tProd na (tsl_rec0 n o A) (tsl_rec0 (n+1) o B)
+  | tLambda na A t  => tLambda na (tsl_rec0 n o A) (tsl_rec0 (n+1) o t)
+  | tLetIn na t A u => tLetIn na (tsl_rec0 n o t) (tsl_rec0 n o A) (tsl_rec0 (n+1) o u)
+  | tApp t lu       => tApp (tsl_rec0 n o t) (List.map (tsl_rec0 n o) lu)
+  | tProj p t => tProj p (tsl_rec0 n o t)
+  (* | tFix : mfixpoint term -> nat -> term *)
+  (* | tCoFix : mfixpoint term -> nat -> term *)
+  | _ => t
+  end.
+
+(* HACKISH UNIVERSE HANDLING *)
+Definition univ_transport := tConst "UnivalentParametricity.theories.HoTT.univalent_transport" [lSet; lSet].
+Definition ur_refl := tConst "UnivalentParametricity.theories.UR.ur_refl" [lSet; lSet; lSet].
 
 Fixpoint tsl_rec (fuel : nat) (E : tsl_table) (Σ : global_env_ext) (Γ₁ : context) (Γ₂ : context) (t : term)
   : tsl_result TslRes :=
@@ -125,29 +151,40 @@ Fixpoint tsl_rec (fuel : nat) (E : tsl_table) (Σ : global_env_ext) (Γ₁ : con
   | O => raise NotEnoughFuel
   | S fuel =>
 	match t with
-  | tSort s => ret (mkRes t todo todo (tApp <% UR_id %> [t]))
+  | tSort s => ret (mkRes t (tApp <% UR_id %> [t]))
+
+  | tProd n A B =>
+    rA <- tsl_rec fuel E Σ Γ₁ Γ₂ A ;;
+    let B' := tLambda n A B in
+    rB <- tsl_rec fuel E Σ Γ₁ Γ₂ B' ;;
+    ret {| trad := tProd n (trad rA) (tApp (trad rB) [tRel 0])
+        ;  w    := mkForallUR A (trad rA) (w rA) B' (trad rB) (w rB)
+        |}
 
   | tInd ind u =>
       match lookup_table E (IndRef ind) with
-      | None => ret (mkRes t todo todo (tApp <% UR_id %> [t]))
       | Some tsl => ret tsl
-      end
-  
-  | tConstruct i n univs =>
-      match lookup_table E (ConstructRef i n) with
-      | None => ret (mkRes t todo todo todo)
-      | Some tsl => ret tsl
+      | None     => ret (mkRes t (tApp <% UR_id %> [t]))
       end
 
-  (* TODO: infer types from local context *)
-  | tRel x => ret (mkRes (tRel x) todo todo (tRel (x * 3)))
+  | tConstruct i n univs =>
+      match lookup_table E (ConstructRef i n) with
+      | Some tsl => ret tsl
+      | None => Error TranslationNotHandeled  (* TODO *)
+      end
+  
+  | tConst n univs =>
+      match lookup_table E (ConstRef n) with
+      | Some tsl => ret tsl
+      | None => Error TranslationNotHandeled  (* TODO *)
+      end
+
+  | tRel x => ret (mkRes t (tRel (x * 3)))
 
   | tLambda n A B =>
       rA <- tsl_rec fuel E Σ Γ₁ Γ₂ A ;;
       rB <- tsl_rec fuel E Σ (vass n A :: Γ₁) (vass n (trad rA) :: Γ₂) B ;;
       ret {| trad := tLambda n (trad rA) (trad rB)
-          ;  t₁ := tProd n A        (t₁ rB)
-          ;  t₂ := tProd n (trad rA) (t₂ rB)
           ;  w := tLambda (suffix n "₁") A (
                     tLambda (suffix n "₂") (trad rA) (
                       tLambda (suffix n "ᵣ") (UR_apply (w rA) (tRel 1) (tRel 0)) (
@@ -156,18 +193,26 @@ Fixpoint tsl_rec (fuel : nat) (E : tsl_table) (Σ : global_env_ext) (Γ₁ : con
                     )
                   )
           |}
-    
-  | tProd n A B =>
-      rA <- tsl_rec fuel E Σ Γ₁ Γ₂ A ;;
-      let B' := tLambda n A B in
-      rB <- tsl_rec fuel E Σ Γ₁ Γ₂ B' ;;
-      ret {| trad := tProd n (trad rA) (tApp (trad rB) [tRel 0])
-          ;  t₁ := todo
-          ;  t₂ := todo
-          ;  w  := mkForallUR A (trad rA) (w rA) B' (trad rB) (w rB)
-          |}
+  
+  | tApp f args =>
+      match tsl_rec fuel E Σ Γ₁ Γ₂ f with
+      | Success rf =>
+          args' <- monad_map (tsl_rec fuel E Σ Γ₁ Γ₂) args ;;
+          ret (mkRes (tApp (trad rf) (List.map trad args'))
+                    (tApp (w rf) (List.flat_map (fun (p : term * TslRes) => 
+                              [tsl_rec0 0 2 (fst p); tsl_rec0 0 1 (trad (snd p)); w (snd p)]) (zip args args'))))
+      | Error _ =>
+          match infer' Σ Γ₁ t with
+          | Checked typ =>
+              typ' <- tsl_rec fuel E Σ Γ₁ Γ₂ typ ;;
+              ret (mkRes (tApp univ_transport [ typ; trad typ'; UR_equiv (w typ') ; t ])
+                  (tApp ur_refl [ typ; trad typ'; w typ'; t ]))
+              
+          | TypeError t => Error (TypingError t)
+          end
+      end
 
-	| _ => ret (mkRes t todo todo todo)
+	| _ => ret (mkRes t todo)
   end
   end.
 
@@ -178,27 +223,38 @@ Definition convert {A} (E : tsl_table) (x : A) :=
 
   match p with
   | (env, term) =>
-    result <- tmEval lazy (tsl_rec fuel E (empty_ext []) [] [] term) ;;
+    result <- tmEval lazy (tsl_rec fuel E (empty_ext env) [] [] term) ;;
     match result with
     | Error e =>
       print_nf e ;;
       fail_nf "Translation failed"
     | Success res =>
         tmPrint "obtained translation: " ;;
-        tmEval all (trad res) >>= tmUnquote >>= tmPrint
+        t <- tmEval all (trad res) ;;
+        tmPrint t ;;
+        tmUnquote t >>= tmPrint
     end
   end.
 
 Open Scope type_scope.
 
-
-Definition Can_nat_N : nat ≈ N := Canonical_UR nat N.
-
 Definition nat_N_tsl : tsl_table :=
-	[ (IndRef (mkInd "Coq.Init.Datatypes.nat" 0), mkRes <% N %> <% Type %> <% Type %> <% compat_nat_N %>)
-	; (ConstructRef (mkInd "Coq.Init.Datatypes.nat" 0) 0, mkRes <% 0%N %> <% nat %> <% N %> todo)
+	[ (IndRef (mkInd "Coq.Init.Datatypes.nat" 0), mkRes <% N %> <% compat_nat_N %>)
+  ; (ConstructRef (mkInd "Coq.Init.Datatypes.nat" 0) 0, mkRes <% 0%N %> (H4CK <% compat_zero %>))
+  ; (ConstRef "Coq.Init.Nat.add", mkRes <% N.add %> (H4CK <% compat_add %>))
+  ; (ConstRef "Coq.Init.Nat.mul", mkRes <% N.mul %> (H4CK <% compat_mul %>))
+  ; (ConstRef "Coq.Init.Nat.div", mkRes <% N.div %> (H4CK <% compat_div %>))
+  ; (ConstRef "Coq.Init.Nat.pow", mkRes <% N.pow %> (H4CK <% compat_pow %>))
+  ; (ConstRef "Coq.Init.Nat.sub", mkRes <% N.sub %> (H4CK <% compat_sub %>))
+  ; (ConstRef "Coq.Init.Peano.le", mkRes <% N.le %> (H4CK <% compat_le %>))
   ].
 
+Close Scope type_scope.
 Unset Strict Unquote Universe Mode.
 
-Run TemplateProgram (convert nat_N_tsl (fun (x : nat) => 0)).
+Run TemplateProgram (convert nat_N_tsl (5 + 0)).
+Run TemplateProgram (convert nat_N_tsl (0 + 0 - 0)).
+Run TemplateProgram (convert nat_N_tsl (fun (x:nat) => pow x 2 + 2 * x + 1)).
+
+Run TemplateProgram (convert nat_N_tsl (nat * nat)%type).
+Run TemplateProgram (convert nat_N_tsl (nat -> nat)%type).
