@@ -112,11 +112,15 @@ Instance UR_Type_def@{i j} : UR@{j j j} Type@{i} Type@{i} :=
 Hint Extern 0 (?x ≈ ?y) => eassumption : typeclass_instances.
 
 
-Class URForall_Type_class A A' {HA : UR A A'}  (P : A -> Type) (Q : A' -> Type) :=
+Class URForall_Type_class A A' {HA : UR A A'}  (P : A -> Type) (Q : A' -> Type) := mkForall
   { transport_ :> Transportable P;
     ur_type :> forall x y (H:x ≈ y), P x ⋈ Q y}.
 
-Arguments ur_type {_ _ _ _ _} _. 
+
+Definition forall_from_ur {A A'} {HA : A ⋈ A'} {P : A -> Type} {Q : A' -> Type} (eB : forall x y (H:x ≈ y), P x ⋈ Q y) : @URForall_Type_class A A' (HA.(Ur)) P Q
+  := mkForall A A' (HA.(Ur)) P Q (Transportable_default P) eB.
+
+Arguments ur_type {_ _ _ _ _} _.
 
 Definition URForall_Type A A' {HA : UR A A'} :
   UR (A -> Type) (A' -> Type)
