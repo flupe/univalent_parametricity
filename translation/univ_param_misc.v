@@ -100,7 +100,7 @@ Definition type_subst := { A : Type & { B : Type & A ⋈ B }}.
 Definition term_subst := { A : Type & { B : Type & { w : UR A B & { a : A & {b : B & a ≈ b }}}}}.
 
 Definition subst_type {A B : Type} (ur : A ⋈ B) : type_subst := existT A (existT B ur).
-Definition subst_term {A B : Type} {w : UR A B} (a : A) (b : B) (e : @ur A B w a b) : term_subst :=
+Definition subst_term {A B : Type} {w : UR A B} {a : A} {b : B} (e : @ur A B w a b) : term_subst :=
   existT A (existT B (existT w (existT a (existT b e)))).
 
 Record TranslationRule := mkTslTable
@@ -108,11 +108,15 @@ Record TranslationRule := mkTslTable
   ; term_rules : Datatypes.list term_subst
   }.
 
-Definition test : TranslationRule :=
-  mkTslTable [ subst_type compat_nat_N ]
-             [ ].
+Definition to_global_ref (t : term) : option global_reference :=
+  match t with
+  | tInd ind _ => ret (IndRef ind)
+  | tConstruct ind i _ => ret (ConstructRef ind i)
+  | tConst n _ => ret (ConstRef n)
+  | _ => None
+  end.
 
-(* Fixpoint extract_type_rules (t : Datatypes.list type_subst) : TemplateMonad tsl_table :=
+Fixpoint extract_type_rules (t : Datatypes.list type_subst) : TemplateMonad tsl_table :=
   match t with
   | [] => ret []
   | (existT A (existT B ur)) :: t =>
@@ -120,11 +124,37 @@ Definition test : TranslationRule :=
       B <- tmQuote B ;;
       ur <- tmQuote ur ;;
       rest <- extract_type_rules t ;;
-      tmPrint rest ;;
-      ret []
+      ret (with_default rest (option_map (fun gr => (gr, mkRes B ur) :: rest) (to_global_ref A)))
   end.
 
-Run TemplateProgram (extract_type_rules (type_rules test)). *)
+Fixpoint extract_term_rules (t : Datatypes.list term_subst) : TemplateMonad tsl_table :=
+match t with
+| [] => ret []
+| (existT _ (existT _ (existT _ (existT a (existT b e))))):: t =>
+    a <- tmQuote a ;;
+    b <- tmQuote b ;;
+    e <- tmQuote e ;;
+    rest <- extract_term_rules t ;;
+    ret (with_default rest (option_map (fun gr => (gr, mkRes b (H4CK e)) :: rest) (to_global_ref a)))
+end.
+
+
+Definition test : TranslationRule :=
+  mkTslTable [ subst_type compat_nat_N ]
+             [ subst_term compat_add
+             ; subst_term compat_zero
+             ; subst_term compat_mul
+             ; subst_term compat_div
+             ; subst_term compat_pow
+             ; subst_term compat_sub
+             ; subst_term compat_le
+             ].
+
+Run TemplateProgram (
+  f <- extract_term_rules (term_rules test) ;;
+  f <- tmEval lazy f ;;
+  tmPrint f
+).
 
 Fixpoint tsl_rec0 (n : nat) (o : nat) (t : term) {struct t} : term :=
   match t with
