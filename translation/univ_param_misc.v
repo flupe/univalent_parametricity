@@ -7,52 +7,17 @@ Require Import NatBinDefs NatBinALC.
 Require Import BinInt BinNat Nnat.
 Import Template.Universes.Level.
 Require Import String.
+Require Import UnivalentParametricity.translation.utils.
+
+Close Scope hott_list_scope.
+Open Scope list_scope.
+Open Scope nat_scope.
+Open Scope type_scope.
 
 Set Universe Polymorphism.
 Set Primitive Projections.
 Set Polymorphic Inductive Cumulativity. 
 Unset Universe Minimization ToSet.
-
-Close Scope hott_list_scope.
-Open Scope list_scope.
-Open Scope string_scope.
-Open Scope nat_scope.
-Open Scope type_scope.
-
-Fixpoint zip {A B : Type} (ta : Datatypes.list A) (tb : Datatypes.list B) : Datatypes.list (A * B) :=
-  match ta, tb with
-  | a :: ta, b :: tb => (a, b) :: zip ta tb
-  | _, _ => []
-  end.
-
-Record TslRes := mkRes
-  { trad : term (* the translated term *)
-  ; w  : term   (* witness of relation between the source and translated terms *)
-                (* if t : Type, then w : t ⋈ t'
-                   otherwise, with t : A,  w : t ≈ t' : A ⋈ A'*)
-  }.
-
-Definition tsl_table := Datatypes.list (global_reference * TslRes).
-
-Fixpoint lookup_table (E : tsl_table) (gr : global_reference) : option TslRes :=
-	match E with
-	| hd :: tl =>
-		if gref_eq_dec gr (fst hd) then Some (snd hd)
-		else lookup_table tl gr
-	| [] => None
-	end.
-
-Definition suffix (n : name) s : name :=
-  match n with
-  | nAnon     => nAnon
-  | nNamed id => nNamed (id ++ s)
-  end.
-
-Definition with_default {A} (d : A) (x : option A) : A :=
-  match x with
-  | Some x => x
-  | None => d
-  end.
 
 Local Existing Instance config.default_checker_flags.
 Local Existing Instance default_fuel.
@@ -94,68 +59,6 @@ Definition UR_equiv (e : term) :=
   tProj ({| inductive_mind := "UnivalentParametricity.theories.UR.UR_Type"; inductive_ind  := 0 |}, 2, 0)%core (e).
 
 
-(* Utilities to provide correct by construction translation rules *)
-Arguments existT {_ _} _ _.
-Definition type_subst := { A : Type & { B : Type & A ⋈ B }}.
-Definition term_subst := { A : Type & { B : Type & { w : UR A B & { a : A & {b : B & a ≈ b }}}}}.
-
-Definition subst_type {A B : Type} (ur : A ⋈ B) : type_subst := existT A (existT B ur).
-Definition subst_term {A B : Type} {w : UR A B} {a : A} {b : B} (e : @ur A B w a b) : term_subst :=
-  existT A (existT B (existT w (existT a (existT b e)))).
-
-Record TranslationRule := mkTslTable
-  { type_rules : Datatypes.list type_subst
-  ; term_rules : Datatypes.list term_subst
-  }.
-
-Definition to_global_ref (t : term) : option global_reference :=
-  match t with
-  | tInd ind _ => ret (IndRef ind)
-  | tConstruct ind i _ => ret (ConstructRef ind i)
-  | tConst n _ => ret (ConstRef n)
-  | _ => None
-  end.
-
-Fixpoint extract_type_rules (t : Datatypes.list type_subst) : TemplateMonad tsl_table :=
-  match t with
-  | [] => ret []
-  | (existT A (existT B ur)) :: t =>
-      A <- tmQuote A ;;
-      B <- tmQuote B ;;
-      ur <- tmQuote ur ;;
-      rest <- extract_type_rules t ;;
-      ret (with_default rest (option_map (fun gr => (gr, mkRes B ur) :: rest) (to_global_ref A)))
-  end.
-
-Fixpoint extract_term_rules (t : Datatypes.list term_subst) : TemplateMonad tsl_table :=
-match t with
-| [] => ret []
-| (existT _ (existT _ (existT _ (existT a (existT b e))))):: t =>
-    a <- tmQuote a ;;
-    b <- tmQuote b ;;
-    e <- tmQuote e ;;
-    rest <- extract_term_rules t ;;
-    ret (with_default rest (option_map (fun gr => (gr, mkRes b (H4CK e)) :: rest) (to_global_ref a)))
-end.
-
-
-Definition test : TranslationRule :=
-  mkTslTable [ subst_type compat_nat_N ]
-             [ subst_term compat_add
-             ; subst_term compat_zero
-             ; subst_term compat_mul
-             ; subst_term compat_div
-             ; subst_term compat_pow
-             ; subst_term compat_sub
-             ; subst_term compat_le
-             ].
-
-Run TemplateProgram (
-  f <- extract_term_rules (term_rules test) ;;
-  f <- tmEval lazy f ;;
-  tmPrint f
-).
-
 Fixpoint tsl_rec0 (n : nat) (o : nat) (t : term) {struct t} : term :=
   match t with
   | tRel k => if Nat.leb n k then (* global variable *) tRel (3 * (k - n) + n + o)
@@ -171,6 +74,8 @@ Fixpoint tsl_rec0 (n : nat) (o : nat) (t : term) {struct t} : term :=
   (* | tCoFix : mfixpoint term -> nat -> term *)
   | _ => t
   end.
+
+Open Scope string_scope.
 
 (* HACKISH UNIVERSE HANDLING *)
 Definition univ_transport := tConst "UnivalentParametricity.theories.HoTT.univalent_transport" [lSet; lSet].
@@ -208,7 +113,14 @@ Fixpoint tsl_rec (fuel : nat) (E : tsl_table) (Σ : global_env_ext) (Γ₁ : con
   | tConst n univs =>
       match lookup_table E (ConstRef n) with
       | Some tsl => ret tsl
-      | None => Error TranslationNotHandeled  (* TODO *)
+      | None =>
+          match infer' Σ Γ₁ t with
+          | Checked typ =>
+              typ' <- tsl_rec fuel E Σ Γ₁ Γ₂ typ ;;
+              ret (mkRes (tApp univ_transport [ typ; trad typ'; UR_equiv (w typ') ; t ])
+                (tApp ur_refl [ typ; trad typ'; w typ'; t ]))
+          | TypeError e => Error (TypingError e)
+          end
       end
 
   | tRel x => ret (mkRes t (tRel (x * 3)))
@@ -237,9 +149,12 @@ Fixpoint tsl_rec (fuel : nat) (E : tsl_table) (Σ : global_env_ext) (Γ₁ : con
           match infer' Σ Γ₁ t with
           | Checked typ =>
               typ' <- tsl_rec fuel E Σ Γ₁ Γ₂ typ ;;
-              ret (mkRes (tApp univ_transport [ typ; trad typ'; UR_equiv (w typ') ; t ])
-                  (tApp ur_refl [ typ; trad typ'; w typ'; t ]))
-              
+              let t' := tApp univ_transport [ typ; trad typ'; UR_equiv (w typ') ; t ] in
+              match infer' Σ [] t' with
+              | Checked   _ => ret (mkRes t' (tApp ur_refl [ typ; trad typ'; w typ'; t ]))
+              | TypeError e => ret (mkRes t' (tApp ur_refl [ typ; trad typ'; w typ'; t ]))
+              end
+ 
           | TypeError t => Error TranslationNotHandeled
           end
       end
@@ -253,15 +168,17 @@ Close Scope type_scope.
 
 Inductive ResultType := Term | Witness.
 
-Definition convert {A} (E : tsl_table) (t : ResultType) (x : A) :=
+Close Scope type_scope.
+Definition convert {A} (ΣE : (global_env * tsl_table)%type) (t : ResultType) (x : A) :=
   p <- tmQuoteRec x;;
 
-  match p with
-  | (env, term) =>
-    match infer' (empty_ext env) [] term with
+  match p, ΣE with
+  | (env, term), (Σ, E)%type =>
+    let env' := empty_ext (app Σ env) in
+    match infer' env' [] term with
     | Checked typ =>
-      result <- tmEval lazy (tsl_rec fuel E (empty_ext env) [] [] term) ;;
-      result' <- tmEval lazy (tsl_rec fuel E (empty_ext env) [] [] typ) ;;
+      result <- tmEval lazy (tsl_rec fuel E env' [] [] term) ;;
+      result' <- tmEval lazy (tsl_rec fuel E env' [] [] typ) ;;
       match result, result' with
       | Error e, _ | _, Error e =>
         print_nf e ;;
@@ -276,31 +193,34 @@ Definition convert {A} (E : tsl_table) (t : ResultType) (x : A) :=
     end
   end.
 
-Open Scope type_scope.
+
+(* EXAMPLE *)
 
 
-Definition nat_N_tsl : tsl_table :=
-	[ (IndRef (mkInd "Coq.Init.Datatypes.nat" 0), mkRes <% N %> (H4CK <% compat_nat_N %>))
-  ; (ConstructRef (mkInd "Coq.Init.Datatypes.nat" 0) 0, mkRes <% 0%N %> (H4CK <% compat_zero %>))
-  ; (ConstRef "Coq.Init.Nat.add", mkRes <% N.add %> (H4CK <% compat_add %>))
-  ; (ConstRef "Coq.Init.Nat.mul", mkRes <% N.mul %> (H4CK <% compat_mul %>))
-  ; (ConstRef "Coq.Init.Nat.div", mkRes <% N.div %> (H4CK <% compat_div %>))
-  ; (ConstRef "Coq.Init.Nat.pow", mkRes <% N.pow %> (H4CK <% compat_pow %>))
-  ; (ConstRef "Coq.Init.Nat.sub", mkRes <% N.sub %> (H4CK <% compat_sub %>))
-  ; (ConstRef "Coq.Init.Peano.le", mkRes <% N.le %> (H4CK <% compat_le  %>))
-  ].
+Run TemplateProgram (
+  define_translation "tsl_nat_N"
+    [ subst_type compat_nat_N ]
+    [ subst_term compat_add
+    ; subst_term compat_zero
+    ; subst_term compat_mul
+    ; subst_term compat_div
+    ; subst_term compat_pow
+    ; subst_term compat_sub
+    ; subst_term compat_le
+    ]).
 
-
-Close Scope type_scope.
 Unset Strict Unquote Universe Mode.
 
-Run TemplateProgram (convert nat_N_tsl Witness (5 + 0)).
-Run TemplateProgram (convert nat_N_tsl Witness (0 + 0 - 0)).
+Run TemplateProgram (convert tsl_nat_N Witness (5 + 0)).
+Run TemplateProgram (convert tsl_nat_N Witness (0 + 0 - 0)).
 
-Run TemplateProgram (convert nat_N_tsl Term    (fun (x:nat) => x * x)).
-Run TemplateProgram (convert nat_N_tsl Witness (fun (x:nat) => x * x)).
+Run TemplateProgram (convert tsl_nat_N Term    (fun (x:nat) => x * x)).
+Run TemplateProgram (convert tsl_nat_N Witness (fun (x:nat) => x * x)).
 
-Run TemplateProgram (convert nat_N_tsl Term (fun (x:nat) => pow x 2 + 2 * x + 1)).
-Run TemplateProgram (convert nat_N_tsl Witness (fun (x:nat) => pow x 2 + 2 * x + 1)).
+Run TemplateProgram (convert tsl_nat_N Term (fun (x:nat) => pow x 2 + 2 * x + 1)).
+Run TemplateProgram (convert tsl_nat_N Witness (fun (x:nat) => pow x 2 + 2 * x + 1)).
 
-Run TemplateProgram (convert nat_N_tsl Witness (fun (x:nat) => x + 3)).
+Run TemplateProgram (convert tsl_nat_N Witness (fun (x:nat) => x + 3)).
+
+Run TemplateProgram (convert tsl_nat_N Witness (forall x, 0 <= x)%type).
+
