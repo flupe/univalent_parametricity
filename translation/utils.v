@@ -61,7 +61,6 @@ Fixpoint H4CK (a : term) :=
   | _ => a
   end.
 
-
 (* Utilities to provide correct by construction translation rules *)
 Arguments existT {_ _} _ _.
 Definition type_subst := { A : Type & { B : Type & A ⋈ B }}.
@@ -93,24 +92,26 @@ Fixpoint extract_type_rules (t : Datatypes.list type_subst) : TemplateMonad tsl_
       tmEval lazy (with_default rest (option_map (fun gr => (gr, mkRes B (H4CK ur)) :: rest) (to_global_ref A)))
   end.
 
+Open Scope pair_scope.
 
 Fixpoint extract_term_rules (t : Datatypes.list term_subst) : TemplateMonad tsl_table :=
   match t with
   | [] => ret []
   | (existT _ (existT _ (existT _ (existT a (existT b e))))):: t =>
-      a <- tmQuote a ;;
-      b <- tmQuote b ;;
-      e <- tmQuote e ;;
+      a    <- tmQuote a ;;
+      b    <- tmQuote b ;;
+      e    <- tmQuote e ;;
       rest <- extract_term_rules t ;;
+
       tmEval lazy (with_default rest (option_map (fun gr => (gr, mkRes b (H4CK e)) :: rest) (to_global_ref a)))
   end.
 
-Open Scope pair_scope.
 
 Definition define_translation (n : ident)
                               (type_rules : Datatypes.list type_subst)
                               (term_rules : Datatypes.list term_subst) :=
   one <- extract_type_rules type_rules ;;
   two <- extract_term_rules term_rules ;;
-  table <- tmEval all (([] : global_env), one ++ two) ;;
-  tmDefinition n table.
+  t <- tmQuoteRec term_rules ;;
+  t' <- tmQuoteRec type_rules ;;
+  tmDefinition n (([] : global_env), one ++ two).

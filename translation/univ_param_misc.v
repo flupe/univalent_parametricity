@@ -7,6 +7,7 @@ Require Import NatBinDefs NatBinALC.
 Require Import BinInt BinNat Nnat.
 Import Template.Universes.Level.
 Require Import String.
+Require Import UnivalentParametricity.theories.Transportable.
 Require Import UnivalentParametricity.translation.utils.
 
 Close Scope hott_list_scope.
@@ -22,6 +23,27 @@ Unset Universe Minimization ToSet.
 Local Existing Instance config.default_checker_flags.
 Local Existing Instance default_fuel.
 
+Quote Definition tSigma := @sigT.
+Quote Definition tPair := @existT.
+Definition pair (typ1 typ2 t1 t2 : term) : term
+  := tApp tPair [ typ1 ; typ2 ; t1 ; t2].
+Definition pack (t u : term) : term
+  := tApp tSigma [ t ; u ].
+
+
+Run TemplateProgram (
+  define_translation "tsl_nat_N"%string
+    [ subst_type compat_nat_N ]
+    [ subst_term compat_add
+    ; subst_term compat_zero
+    ; subst_term compat_mul
+    ; subst_term compat_div
+    ; subst_term compat_pow
+    ; subst_term compat_sub
+    ; subst_term compat_le
+    ]).
+
+
 (* VERY WIP *)
 Definition UR_id (A : Type) : A ≈ A.
 	apply Canonical_UR, Equiv_id.
@@ -35,15 +57,6 @@ Definition ur_id {A : Type} (x : A) : @ur A A (Ur (UR_id A)) x x.
   apply e.
   reflexivity.
 Defined.
-
-(* HACK AHEAD *)
-Fixpoint H4CK (a : term) :=
-  match a with
-  | tConst n u => tConst n (List.map (fun x => lSet) u)
-  | tApp f args => tApp (H4CK f) (List.map H4CK args)
-  | tLambda n A B => tLambda n (H4CK A) (H4CK B)
-  | _ => a
-  end.
 
 Definition mkForallUR (A A' eA B B' eB: term) := tApp (H4CK <% FP_forall_ur_type %>) [A; A'; eA; B; B'; eB].
 
@@ -78,14 +91,36 @@ Fixpoint tsl_rec0 (n : nat) (o : nat) (t : term) {struct t} : term :=
 Open Scope string_scope.
 
 (* HACKISH UNIVERSE HANDLING *)
-Definition univ_transport := tConst "UnivalentParametricity.theories.HoTT.univalent_transport" [lSet; lSet].
+Definition univ_transport (l1 l2 : Level.t) := tConst "UnivalentParametricity.theories.HoTT.univalent_transport" [l1; l2].
 Definition ur_refl := tConst "UnivalentParametricity.theories.UR.ur_refl" [lSet; lSet; lSet].
 
-Fixpoint tsl_rec (fuel : nat) (E : tsl_table) (Σ : global_env_ext) (Γ₁ : context) (Γ₂ : context) (t : term)
+Definition mk_transport (A B : term) (sA sB : Level.t) (eq t : term) := tApp (univ_transport sA sB) [A; B; eq; t].
+
+Print prod.
+
+(* Fixpoint correct (n : nat) (t : term) :=
+  match t with
+  | tRel k =>
+      if Nat.leb n k then t else t
+  | tEvar k ts => tEvar k (List.map (correct n o) ts)
+  | tCast t c a => tCast (correct n o t) c (tsl_rec0 n o a)
+  | tProd na A B => tProd na (correct n o A) (correct (n+1) o B)
+  | tLambda na A t  => tLambda na (tsl_rec0 n o A) (tsl_rec0 (n+1) o t)
+  | tLetIn na t A u => tLetIn na (tsl_rec0 n o t) (tsl_rec0 n o A) (tsl_rec0 (n+1) o u)
+  | tApp t lu       => tApp (tsl_rec0 n o t) (List.map (tsl_rec0 n o) lu)
+  | tProj p t => tProj p (tsl_rec0 n o t)
+  (* | tFix : mfixpoint term -> nat -> term *)
+  (* | tCoFix : mfixpoint term -> nat -> term *)
+  | _ => t
+  end. *)
+
+
+Fixpoint tsl_rec' (lift : bool) (fuel : nat) (E : tsl_table) (Σ : global_env_ext) (Γ₁ : context) (Γ₂ : context) (t : term)
   : tsl_result TslRes :=
   match fuel with
   | O => raise NotEnoughFuel
   | S fuel =>
+  let tsl_rec := tsl_rec' false in
 	match t with
   | tSort s => ret (mkRes t (tApp <% UR_id %> [t]))
 
@@ -107,19 +142,28 @@ Fixpoint tsl_rec (fuel : nat) (E : tsl_table) (Σ : global_env_ext) (Γ₁ : con
   | tConstruct i n univs =>
       match lookup_table E (ConstructRef i n) with
       | Some tsl => ret tsl
-      | None => Error TranslationNotHandeled  (* TODO *)
+      | None =>
+          match lift, infer' Σ Γ₁ t with
+          | true, Checked typ =>
+              typ' <- tsl_rec fuel E Σ Γ₁ Γ₂ typ ;;
+              ret (mkRes (tApp (univ_transport lSet lSet) [ typ; trad typ'; UR_equiv (w typ') ; t ])
+                (tApp ur_refl [ typ; trad typ'; w typ'; t ]))
+          | true, TypeError e => Error (TypingError e)
+          | false, _ => Error TranslationNotHandeled
+          end
       end
   
   | tConst n univs =>
       match lookup_table E (ConstRef n) with
       | Some tsl => ret tsl
       | None =>
-          match infer' Σ Γ₁ t with
-          | Checked typ =>
+          match lift, infer' Σ Γ₁ t with
+          | true, Checked typ =>
               typ' <- tsl_rec fuel E Σ Γ₁ Γ₂ typ ;;
-              ret (mkRes (tApp univ_transport [ typ; trad typ'; UR_equiv (w typ') ; t ])
+              ret (mkRes (tApp (univ_transport lSet lSet) [ typ; trad typ'; UR_equiv (w typ') ; t ])
                 (tApp ur_refl [ typ; trad typ'; w typ'; t ]))
-          | TypeError e => Error (TypingError e)
+          | true, TypeError e => Error (TypingError e)
+          | false, _ => Error TranslationNotHandeled
           end
       end
 
@@ -139,9 +183,9 @@ Fixpoint tsl_rec (fuel : nat) (E : tsl_table) (Σ : global_env_ext) (Γ₁ : con
           |}
   
   | tApp f args =>
-      match tsl_rec fuel E Σ Γ₁ Γ₂ f with
+      match tsl_rec' false fuel E Σ Γ₁ Γ₂ f with
       | Success rf =>
-          args' <- monad_map (tsl_rec fuel E Σ Γ₁ Γ₂) args ;;
+          args' <- monad_map (tsl_rec' true fuel E Σ Γ₁ Γ₂) args ;;
           ret (mkRes (tApp (trad rf) (List.map trad args'))
                     (tApp (w rf) (List.flat_map (fun (p : term * TslRes) => 
                               [tsl_rec0 0 2 (fst p); tsl_rec0 0 1 (trad (snd p)); w (snd p)]) (zip args args'))))
@@ -149,11 +193,8 @@ Fixpoint tsl_rec (fuel : nat) (E : tsl_table) (Σ : global_env_ext) (Γ₁ : con
           match infer' Σ Γ₁ t with
           | Checked typ =>
               typ' <- tsl_rec fuel E Σ Γ₁ Γ₂ typ ;;
-              let t' := tApp univ_transport [ typ; trad typ'; UR_equiv (w typ') ; t ] in
-              match infer' Σ [] t' with
-              | Checked   _ => ret (mkRes t' (tApp ur_refl [ typ; trad typ'; w typ'; t ]))
-              | TypeError e => ret (mkRes t' (tApp ur_refl [ typ; trad typ'; w typ'; t ]))
-              end
+              let t' := mk_transport typ (trad typ') lSet lSet (UR_equiv (w typ')) t in
+              ret (mkRes t' (tApp ur_refl [ typ; trad typ'; w typ'; t ]))
  
           | TypeError t => Error TranslationNotHandeled
           end
@@ -168,52 +209,63 @@ Close Scope type_scope.
 
 Inductive ResultType := Term | Witness.
 
-Close Scope type_scope.
-Definition convert {A} (ΣE : (global_env * tsl_table)%type) (t : ResultType) (x : A) :=
-  p <- tmQuoteRec x;;
 
-  match p, ΣE with
-  | (env, term), (Σ, E)%type =>
-    let env' := empty_ext (app Σ env) in
-    match infer' env' [] term with
-    | Checked typ =>
-      result <- tmEval lazy (tsl_rec fuel E env' [] [] term) ;;
-      result' <- tmEval lazy (tsl_rec fuel E env' [] [] typ) ;;
-      match result, result' with
-      | Error e, _ | _, Error e =>
+Definition convert {A} (ΣE : (global_env * tsl_table)%type) (t : ResultType) (x : A) :=
+  p <- tmQuoteRec x ;;
+
+  let term := p.2 in
+  let env := empty_ext (app (fst ΣE) p.1) in
+  let E := snd ΣE in
+
+  result <- tmEval lazy (tsl_rec' true fuel E env [] [] term) ;;
+  
+  match result with
+  | Error e =>
+      print_nf e ;;
+      fail_nf "Translation failed"
+      
+  | Success rt =>
+      tmPrint "obtained translation: " ;;
+      t <- tmEval all (match t with Term => trad rt | Witness => (w rt) end);;
+      tmUnquote t >>= tmPrint
+  end.
+(* 
+  Definition translate {A} (ΣE : (global_env * tsl_table)%type) (name : ident) (x : A) :=
+  p <- tmQuoteRec x ;;
+
+  let term := p.2 in
+  let env := empty_ext (app (fst ΣE) p.1) in
+  let E    := snd ΣE in
+
+  match infer' env [] term with
+  | Checked typ =>
+    result  <- tmEval lazy (tsl_rec' true fuel E env [] [] term) ;;
+    result' <- tmEval lazy (tsl_rec' true fuel E env [] [] typ) ;;
+    match result, result' with
+    | Error e, _ | _, Error e =>
         print_nf e ;;
         fail_nf "Translation failed"
-
-      | Success res, Success res' =>
-          tmPrint "obtained translation: " ;;
-          t <- tmEval all (match t with Term => trad res | Witness => (w res) end);;
-          tmUnquote t >>= tmPrint
-      end
-    | TypeError t => fail_nf "Translation failed"
+    
+    | Success res, Success res' =>
+        tmUnquote (trad res) >>= tmDefinition name ;;
+        tmUnquote (w res) >>= tmDefinition (name ++ "_ur")
     end
-  end.
+  | TypeError t => fail_nf (string_of_type_error t)
+  end. *)
 
 
 (* EXAMPLE *)
 
+Parameter f : nat -> nat.
 
-Run TemplateProgram (
-  define_translation "tsl_nat_N"
-    [ subst_type compat_nat_N ]
-    [ subst_term compat_add
-    ; subst_term compat_zero
-    ; subst_term compat_mul
-    ; subst_term compat_div
-    ; subst_term compat_pow
-    ; subst_term compat_sub
-    ; subst_term compat_le
-    ]).
+Run TemplateProgram (convert tsl_nat_N Witness (0)).
+Run TemplateProgram (convert tsl_nat_N Witness (f 5)).
 
-Unset Strict Unquote Universe Mode.
+Set Printing Universes.
 
 Run TemplateProgram (convert tsl_nat_N Witness (5 + 0)).
-Run TemplateProgram (convert tsl_nat_N Witness (0 + 0 - 0)).
 
+Run TemplateProgram (convert tsl_nat_N Witness (f)).
 Run TemplateProgram (convert tsl_nat_N Term    (fun (x:nat) => x * x)).
 Run TemplateProgram (convert tsl_nat_N Witness (fun (x:nat) => x * x)).
 
@@ -222,5 +274,5 @@ Run TemplateProgram (convert tsl_nat_N Witness (fun (x:nat) => pow x 2 + 2 * x +
 
 Run TemplateProgram (convert tsl_nat_N Witness (fun (x:nat) => x + 3)).
 
-Run TemplateProgram (convert tsl_nat_N Witness (forall x, 0 <= x)%type).
-
+(* then it fails *)
+Run TemplateProgram (convert tsl_nat_N Term (fun (x : nat) => S x)).
