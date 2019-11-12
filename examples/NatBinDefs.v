@@ -137,6 +137,11 @@ Proof.
   rewrite (Nat2N_id _). apply Equiv_id.
 Defined. 
 
+Definition compat_nat_N' : nat ≈ N.
+  eapply Canonical_UR.
+  apply Equiv_N_nat.
+Qed.
+
 Definition refl_nat_N (n:nat) : n ≈ (↑ n : N) := ur_refl (e:=compat_nat_N) n.
 Hint Extern 0 (?n = _) => unshelve refine (refl_nat_N _) : typeclass_instances.
 

@@ -3,8 +3,8 @@ Require Import NatBinDefs.
 
 Require Import BinInt BinNat Nnat Vector Arith.Plus Omega ZArith.
 
-Set Universe Polymorphism.
 
+Set Universe Polymorphism.
 
 (* TRANSPORT A LA CARTE *)
 
@@ -17,6 +17,8 @@ Definition compat_pow : Nat.pow ≈ N.pow. Admitted.
 Definition compat_sub : Nat.sub ≈ N.sub. Admitted.
 Definition compat_le : Peano.le ≈ N.le. Admitted.
 Definition compat_zero : 0 ≈ (0)%N. Admitted.
+Definition compat_succ : S ≈ N.succ. Admitted.
+
 
 Hint Extern 0 (plus _ _ = _) => eapply compat_add : typeclass_instances.
 Hint Extern 0 (mult _ _ = _) => eapply compat_mul : typeclass_instances.

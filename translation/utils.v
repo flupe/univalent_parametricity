@@ -12,12 +12,17 @@ Set Primitive Projections.
 Set Polymorphic Inductive Cumulativity. 
 Unset Universe Minimization ToSet.
 
-Record TslRes := mkRes
+Record TslRes :=
   { trad : term (* the translated term *)
+  ; univs : Datatypes.list Level.t (* type of the translated term,
+                   necessary because of universe wizardry *)
   ; w  : term   (* witness of relation between the source and translated terms *)
                 (* if t : Type, then w : t ⋈ t'
                    otherwise, with t : A,  w : t ≈ t' : A ⋈ A'*)
   }.
+
+
+Definition mkRes (a b : term) := Build_TslRes a [] b. 
 
 Definition tsl_table := Datatypes.list (global_reference * TslRes).
 
@@ -58,8 +63,10 @@ Fixpoint H4CK (a : term) :=
   | tConst n u => tConst n (List.map (fun x => lSet) u)
   | tApp f args => tApp (H4CK f) (List.map H4CK args)
   | tLambda n A B => tLambda n (H4CK A) (H4CK B)
-  | _ => a
+  | _ => a 
   end.
+
+(* Definition H4CK : term -> term := id. *)
 
 (* Utilities to provide correct by construction translation rules *)
 Arguments existT {_ _} _ _.
@@ -85,11 +92,16 @@ Fixpoint extract_type_rules (t : Datatypes.list type_subst) : TemplateMonad tsl_
   match t with
   | [] => ret []
   | (existT A (existT B ur)) :: t =>
+      G  <- tmQuote (A ⋈ B) ;;
       A  <- tmQuote A ;;
       B  <- tmQuote B ;;
       ur <- tmQuote ur ;;
+      let U := match G with
+      | tApp (tInd _ (x :: _)) _ => [x]
+      | _ => []
+      end in
       rest <- extract_type_rules t ;;
-      tmEval lazy (with_default rest (option_map (fun gr => (gr, mkRes B (H4CK ur)) :: rest) (to_global_ref A)))
+      tmEval lazy (with_default rest (option_map (fun gr => (gr, Build_TslRes B U (H4CK ur)) :: rest) (to_global_ref A)))
   end.
 
 Open Scope pair_scope.
