@@ -1,14 +1,10 @@
 From MetaCoq Require Import Template.All Checker.All Template.Universes.
 From MetaCoq.Translations Require Import translation_utils.
-Import String MonadNotation List Lists.List.ListNotations.
 Require Import UnivalentParametricity.theories.Basics UnivalentParametricity.theories.StdLib.Basics.
-Require Import Coq.Init.Nat.
-Require Import NatBinDefs NatBinALC.
-Require Import BinInt BinNat Nnat.
+Require Import UnivalentParametricity.theories.Transportable UnivalentParametricity.translation.utils.
+Import String MonadNotation List Lists.List.ListNotations.
+Require Import String NatBinDefs NatBinALC.
 Import Template.Universes.Level.
-Require Import String.
-Require Import UnivalentParametricity.theories.Transportable.
-Require Import UnivalentParametricity.translation.utils.
 From TypingFlags Require Import Loader.
 
 Set Type In Type.
@@ -23,6 +19,7 @@ Set Universe Polymorphism.
 Local Existing Instance config.type_in_type.
 Local Existing Instance default_fuel.
 
+
 Quote Definition tSigma := @sigT.
 Quote Definition tPair := @existT.
 Definition pair (typ1 typ2 t1 t2 : term) : term
@@ -31,6 +28,7 @@ Definition pack (t u : term) : term
   := tApp tSigma [ t ; u ].
 
 
+(* nat to NatBin translation table *)
 Run TemplateProgram (
   define_translation "tsl_nat_N"%string
     [ subst_type compat_nat_N ]
@@ -45,20 +43,47 @@ Run TemplateProgram (
     ]).
 
 
+(* Utilities for the translation *)
 Definition UR_id (A : Type) : A ⋈ A.
 	apply Canonical_UR, Equiv_id.
 Defined.
 
-Definition UR_apply (e a b: term) :=
+
+(* Given e : A ⋈ B, a : A, b : B, returns a ≈ b with the given UR *)
+Definition ur_of (e a b: term) :=
   tApp (tProj ({| inductive_mind := "UnivalentParametricity.theories.UR.UR"
                 ; inductive_ind  := 0 |}, 2, 0)%core
-              (tProj ({| inductive_mind := "UnivalentParametricity.theories.UR.UR_Type"
-                       ; inductive_ind  := 0 |}, 2, 1)%core 
-                     (e)))
-       [a; b].
+          (tProj ({| inductive_mind := "UnivalentParametricity.theories.UR.UR_Type"
+                  ; inductive_ind  := 0 |}, 2, 1)%core 
+            (e))) [a; b].
 
-Definition UR_equiv (e : term) :=
-  tProj ({| inductive_mind := "UnivalentParametricity.theories.UR.UR_Type"; inductive_ind  := 0 |}, 2, 0)%core (e).
+(* Given a term e :  A ⋈ B, returns the projection onto UR_Equiv e : A ≃ B *)
+Definition proj_equiv (e : term) :=
+  tProj ({| inductive_mind := "UnivalentParametricity.theories.UR.UR_Type"
+          ; inductive_ind  := 0 |}, 2, 0)%core e.
+
+(* ↑ (TODO: handle universes) *)
+Definition univ_transport := <% @univalent_transport %>.
+Definition ur_refl        := <% @ur_refl %>.
+
+(* Given A, B, eq : A ≃ B, t : A, returns ↑ t : B *)
+Definition mk_transport (A B eq t : term) := tApp univ_transport [A; B; eq; t].
+
+(* Fixpoint replace_with' {A} (a' a b : Datatypes.list A) :=
+  match  a, b with
+  | _, [] => []
+  | xa :: ta, _ :: tb => xa :: (replace_with' a' ta tb)
+  | [], _ :: tb =>
+      match a' with
+      | [] => b
+      | xa :: ta => xa :: (replace_with' a' ta tb)
+      end
+  end.
+
+Definition replace_with {A} a b := @replace_with' A a a b. *)
+
+
+Definition mkForallUR (A A' eA B B' eB: term) := tApp <% FP_forall_ur_type %> [A; A'; eA; B; B'; eB].
 
 
 Fixpoint tsl_rec0 (n : nat) (o : nat) (t : term) {struct t} : term :=
@@ -76,36 +101,6 @@ Fixpoint tsl_rec0 (n : nat) (o : nat) (t : term) {struct t} : term :=
   (* | tCoFix : mfixpoint term -> nat -> term *)
   | _ => t
   end.
-
-Open Scope string_scope.
-
-(* HACKISH UNIVERSE HANDLING *)
-Definition univ_transport (l1 l2 : Level.t) := tConst "UnivalentParametricity.theories.HoTT.univalent_transport" [l1; l2].
-Definition ur_refl := tConst "UnivalentParametricity.theories.UR.ur_refl" [lSet; lSet; lSet].
-
-Definition mk_transport (A B : term) (sA sB : Level.t) (eq t : term) := tApp (univ_transport sA sB) [A; B; eq; t].
-
-Fixpoint replace_with' {A} (a' a b : Datatypes.list A) :=
-  match  a, b with
-  | _, [] => []
-  | xa :: ta, _ :: tb => xa :: (replace_with' a' ta tb)
-  | [], _ :: tb =>
-      match a' with
-      | [] => b
-      | xa :: ta => xa :: (replace_with' a' ta tb)
-      end
-  end.
-
-Definition replace_with {A} a b := @replace_with' A a a b.
-
-Fixpoint H4CK2 (u : Datatypes.list Level.t) (t : term) : term :=
-  match t with
-  (* | tInd i l => tInd i (replace_with u l)
-  | tConst n l => tConst n (replace_with u l) *)
-  | t => t
-  end.
-
-Definition mkForallUR (u : Datatypes.list Level.t) (A A' eA B B' eB: term) := tApp (H4CK2 u <% FP_forall_ur_type %>) [A; A'; eA; B; B'; eB].
 
 (* 
 Definition test {A B} `{A ⋈ B} (w : forall (x:A) (y:B), x ≈ y -> A ⋈ B) : (forall (x : A) (y : B), x ≈ y -> (fun _ : A => A) x ⋈ (fun _ : B => B) y).
@@ -130,7 +125,7 @@ Fixpoint tsl_rec (fuel : nat) (E : tsl_table) (Σ : global_env_ext) (Γ₁ : con
     ret {| trad := tProd n (trad rA) (tApp (trad rB) [tRel 0])
           ;  univs := []
                 (* {A A'} {HA : UR A A'} {P : A -> Type} {Q : A' -> Type} (eB : forall x y (H:x ≈ y), P x ⋈ Q y) *)
-          ;  w := mkForallUR [] A (trad rA) (w rA) B' (trad rB) (tApp (H4CK2 [] <% @forall_from_ur %>) [A; trad rA; w rA; B'; trad rB; w rB])
+          ;  w := mkForallUR A (trad rA) (w rA) B' (trad rB) (tApp (<% @forall_from_ur %>) [A; trad rA; w rA; B'; trad rB; w rB])
         |}
     
   | tInd ind u =>
@@ -146,7 +141,7 @@ Fixpoint tsl_rec (fuel : nat) (E : tsl_table) (Σ : global_env_ext) (Γ₁ : con
           match infer' Σ Γ₁ t with
           | Checked typ =>
               typ' <- tsl_rec fuel E Σ Γ₁ Γ₂ typ ;;
-              ret (mkRes (tApp (univ_transport lSet lSet) [ typ; trad typ'; UR_equiv (w typ') ; t ])
+              ret (mkRes (tApp univ_transport [ typ; trad typ'; proj_equiv (w typ') ; t ])
                 (tApp ur_refl [ typ; trad typ'; w typ'; t ]))
           | TypeError e => Error (TypingError e)
           end
@@ -159,7 +154,7 @@ Fixpoint tsl_rec (fuel : nat) (E : tsl_table) (Σ : global_env_ext) (Γ₁ : con
           match infer' Σ Γ₁ t with
           | Checked typ =>
               typ' <- tsl_rec fuel E Σ Γ₁ Γ₂ typ ;;
-              ret (mkRes (tApp (univ_transport lSet lSet) [ typ; trad typ'; UR_equiv (w typ') ; t ])
+              ret (mkRes (tApp univ_transport [ typ; trad typ'; proj_equiv (w typ') ; t ])
                 (tApp ur_refl [ typ; trad typ'; w typ'; t ]))
           | TypeError e => Error (TypingError e)
           end
@@ -174,7 +169,7 @@ Fixpoint tsl_rec (fuel : nat) (E : tsl_table) (Σ : global_env_ext) (Γ₁ : con
           ; univs := []
           ;  w := tLambda (suffix n "₁") A (
                     tLambda (suffix n "₂") (trad rA) (
-                      tLambda (suffix n "ᵣ") (UR_apply (w rA) (tRel 1) (tRel 0)) (
+                      tLambda (suffix n "ᵣ") (ur_of (w rA) (tRel 1) (tRel 0)) (
                         w rB
                       )
                     )
@@ -199,6 +194,7 @@ Close Scope type_scope.
 Inductive ResultType := Term | Witness.
 
 
+Open Scope string_scope.
 Definition convert {A} (ΣE : (global_env * tsl_table)%type) (t : ResultType) (x : A) :=
   p <- tmQuoteRec x ;;
 
@@ -252,5 +248,7 @@ Unset Strict Unquote Universe Mode.
 Parameter f : nat -> nat.
 Parameter x : nat.
 
-Run TemplateProgram (translate tsl_nat_N "poly" (fun (x : nat) => Nat.pow x 3 + 2)).
+Run TemplateProgram (translate tsl_nat_N "poly" (fun (x : nat) => x)).
+Check (poly_ur : (fun (x : nat) => x) ≈ poly).
+
 Run TemplateProgram (translate tsl_nat_N "test" (f 5)).

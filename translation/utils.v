@@ -58,7 +58,7 @@ Fixpoint zip {A B : Type} (ta : Datatypes.list A) (tb : Datatypes.list B) : Data
 (* HACK AHEAD *)
 Fixpoint H4CK (a : term) :=
   match a with
-  | tConst n u => tConst n [] (*(List.map (fun x => lSet) u)*)
+  | tConst n u => tConst n u (*(List.map (fun x => lSet) u)*)
   | tApp f args => tApp (H4CK f) (List.map H4CK args)
   | tLambda n A B => tLambda n (H4CK A) (H4CK B)
   | _ => a 
