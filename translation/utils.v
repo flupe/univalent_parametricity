@@ -21,11 +21,9 @@ Record TslRes :=
                    otherwise, with t : A,  w : t ≈ t' : A ⋈ A'*)
   }.
 
-
-Definition mkRes (a b : term) := Build_TslRes a [] b. 
+Definition mkRes (a b : term) := Build_TslRes a [] b.
 
 Definition tsl_table := Datatypes.list (global_reference * TslRes).
-
 
 Fixpoint lookup_table (E : tsl_table) (gr : global_reference) : option TslRes :=
 	match E with
@@ -60,7 +58,7 @@ Fixpoint zip {A B : Type} (ta : Datatypes.list A) (tb : Datatypes.list B) : Data
 (* HACK AHEAD *)
 Fixpoint H4CK (a : term) :=
   match a with
-  | tConst n u => tConst n (List.map (fun x => lSet) u)
+  | tConst n u => tConst n [] (*(List.map (fun x => lSet) u)*)
   | tApp f args => tApp (H4CK f) (List.map H4CK args)
   | tLambda n A B => tLambda n (H4CK A) (H4CK B)
   | _ => a 
@@ -101,7 +99,7 @@ Fixpoint extract_type_rules (t : Datatypes.list type_subst) : TemplateMonad tsl_
       | _ => []
       end in
       rest <- extract_type_rules t ;;
-      tmEval lazy (with_default rest (option_map (fun gr => (gr, Build_TslRes B U (H4CK ur)) :: rest) (to_global_ref A)))
+      tmEval lazy (with_default rest (option_map (fun gr => (gr, Build_TslRes B [] (H4CK ur)) :: rest) (to_global_ref A)))
   end.
 
 Open Scope pair_scope.

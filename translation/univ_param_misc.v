@@ -9,6 +9,9 @@ Import Template.Universes.Level.
 Require Import String.
 Require Import UnivalentParametricity.theories.Transportable.
 Require Import UnivalentParametricity.translation.utils.
+From TypingFlags Require Import Loader.
+
+Set Type In Type.
 
 Close Scope hott_list_scope.
 Open Scope list_scope.
@@ -16,11 +19,8 @@ Open Scope nat_scope.
 Open Scope type_scope.
 
 Set Universe Polymorphism.
-Set Primitive Projections.
-Set Polymorphic Inductive Cumulativity. 
-Unset Universe Minimization ToSet.
 
-Local Existing Instance config.default_checker_flags.
+Local Existing Instance config.type_in_type.
 Local Existing Instance default_fuel.
 
 Quote Definition tSigma := @sigT.
@@ -29,6 +29,7 @@ Definition pair (typ1 typ2 t1 t2 : term) : term
   := tApp tPair [ typ1 ; typ2 ; t1 ; t2].
 Definition pack (t u : term) : term
   := tApp tSigma [ t ; u ].
+
 
 Run TemplateProgram (
   define_translation "tsl_nat_N"%string
@@ -43,21 +44,9 @@ Run TemplateProgram (
     ; subst_term compat_le
     ]).
 
-Print tsl_nat_N.
 
-
-(* VERY WIP *)
-Definition UR_id (A : Type) : A ≈ A.
+Definition UR_id (A : Type) : A ⋈ A.
 	apply Canonical_UR, Equiv_id.
-Defined.
-
-Definition ur_id {A : Type} (x : A) : @ur A A (Ur (UR_id A)) x x.
-  pose (w := UR_id A).
-  pose (ur_coh x x).
-  unfold univalent_transport in e.
-  simpl ((equiv w) x) in e.
-  apply e.
-  reflexivity.
 Defined.
 
 Definition UR_apply (e a b: term) :=
@@ -96,11 +85,6 @@ Definition ur_refl := tConst "UnivalentParametricity.theories.UR.ur_refl" [lSet;
 
 Definition mk_transport (A B : term) (sA sB : Level.t) (eq t : term) := tApp (univ_transport sA sB) [A; B; eq; t].
 
-Set Printing Universes.
-Print forall_from_ur.
-Quote Definition t := @forall_from_ur.
-Print t.
-
 Fixpoint replace_with' {A} (a' a b : Datatypes.list A) :=
   match  a, b with
   | _, [] => []
@@ -116,13 +100,17 @@ Definition replace_with {A} a b := @replace_with' A a a b.
 
 Fixpoint H4CK2 (u : Datatypes.list Level.t) (t : term) : term :=
   match t with
-  | tInd i l => tInd i (replace_with u l)
-  | tConst n l => tConst n (replace_with u l)
+  (* | tInd i l => tInd i (replace_with u l)
+  | tConst n l => tConst n (replace_with u l) *)
   | t => t
   end.
 
 Definition mkForallUR (u : Datatypes.list Level.t) (A A' eA B B' eB: term) := tApp (H4CK2 u <% FP_forall_ur_type %>) [A; A'; eA; B; B'; eB].
 
+(* 
+Definition test {A B} `{A ⋈ B} (w : forall (x:A) (y:B), x ≈ y -> A ⋈ B) : (forall (x : A) (y : B), x ≈ y -> (fun _ : A => A) x ⋈ (fun _ : B => B) y).
+  apply w.
+Defined. *)
 
 Fixpoint tsl_rec (fuel : nat) (E : tsl_table) (Σ : global_env_ext) (Γ₁ : context) (Γ₂ : context) (t : term)
   : tsl_result TslRes :=
@@ -138,15 +126,12 @@ Fixpoint tsl_rec (fuel : nat) (E : tsl_table) (Σ : global_env_ext) (Γ₁ : con
     rB <- tsl_rec fuel E Σ Γ₁ Γ₂ B' ;;
 
     (* this is undesirable, but for now we cannot do better *)
-    match univs rA with
-    | [] => raise TranslationNotHandeled
-    | u =>
-        ret {| trad := tProd n (trad rA) (tApp (trad rB) [tRel 0])
-             ;  univs := u
-                   (* {A A'} {HA : UR A A'} {P : A -> Type} {Q : A' -> Type} (eB : forall x y (H:x ≈ y), P x ⋈ Q y) *)
-             ;  w := mkForallUR u A (trad rA) (w rA) B' (trad rB) (tApp (H4CK2 u <% @forall_from_ur %>) [A; trad rA; w rA; B'; trad rB; w rB])
-            |}
-    end
+
+    ret {| trad := tProd n (trad rA) (tApp (trad rB) [tRel 0])
+          ;  univs := []
+                (* {A A'} {HA : UR A A'} {P : A -> Type} {Q : A' -> Type} (eB : forall x y (H:x ≈ y), P x ⋈ Q y) *)
+          ;  w := mkForallUR [] A (trad rA) (w rA) B' (trad rB) (tApp (H4CK2 [] <% @forall_from_ur %>) [A; trad rA; w rA; B'; trad rB; w rB])
+        |}
     
   | tInd ind u =>
       match lookup_table E (IndRef ind) with
@@ -217,6 +202,8 @@ Inductive ResultType := Term | Witness.
 Definition convert {A} (ΣE : (global_env * tsl_table)%type) (t : ResultType) (x : A) :=
   p <- tmQuoteRec x ;;
 
+  tmPrint p ;;
+
   let term := p.2 in
   let env := empty_ext (app (fst ΣE) p.1) in
   let E := snd ΣE in
@@ -244,39 +231,26 @@ Definition translate {A} (ΣE : (global_env * tsl_table)%type) (name : ident) (x
   let E    := snd ΣE in
 
   result  <- tmEval lazy (tsl_rec fuel E env [] [] term) ;;
-  result' <- tmEval lazy (tsl_rec fuel E env [] [] typ) ;;
 
-  match result, result' with
-  | Error e, _ | _, Error e =>
+  match result with
+  | Error e =>
       print_nf e ;;
       fail_nf "Translation failed"
     
-  | Success res, Success res' =>
-      let t := (pair (trad res') (tLambda nAnon (trad res') (UR_apply (w res') (term) (trad res))) (trad res) (w res)) in
-      tmUnquote t >>= tmDefinition name
-      (* tmMkDefinition name ;;
-      tmMkDefinition (name ++ "_ur") (w res) *)
+  | Success res =>
+      (* let t := (pair (trad res') (tLambda nAnon (trad res') (UR_apply (w res') (term) (trad res))) (trad res) (w res)) in
+      tmUnquote t >>= tmDefinition name *)
+      tmPrint (w res) ;;
+      tmMkDefinition name (trad res) ;;
+      tmMkDefinition (name ++ "_ur") (w res)
   end.
 
 (* EXAMPLE *)
 
-Parameter f : nat -> nat.
-
-Set Printing Universes.
 Unset Strict Unquote Universe Mode.
 
-(* Run TemplateProgram (translate tsl_nat_N "poly" (fun (x : nat) => x * x)). *)
+Parameter f : nat -> nat.
+Parameter x : nat.
 
-
-
-Set Printing Universes.
- 
-Run TemplateProgram (convert tsl_nat_N Witness (0)).
-Run TemplateProgram (convert tsl_nat_N Witness (f 5)).
-Run TemplateProgram (convert tsl_nat_N Witness (5 + 0)).
-Run TemplateProgram (convert tsl_nat_N Witness (f)).
-Run TemplateProgram (convert tsl_nat_N Term    (fun (x:nat) => x * x)).
-Run TemplateProgram (convert tsl_nat_N Witness (fun (x:nat) => x * x)).
-Run TemplateProgram (convert tsl_nat_N Term    (fun (x:nat) => pow x 2 + 2 * x + 1)).
-Run TemplateProgram (convert tsl_nat_N Witness (fun (x:nat) => pow x 2 + 2 * x + 1)).
-Run TemplateProgram (convert tsl_nat_N Witness (fun (x:nat) => S x)).
+Run TemplateProgram (translate tsl_nat_N "poly" (fun (x : nat) => Nat.pow x 3 + 2)).
+Run TemplateProgram (translate tsl_nat_N "test" (f 5)).
