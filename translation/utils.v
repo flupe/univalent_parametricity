@@ -2,6 +2,7 @@ From MetaCoq Require Import Template.All Checker.All Template.Universes.
 Import Template.Universes.Level.
 From MetaCoq.Translations Require Import translation_utils.
 Import String MonadNotation List Lists.List.ListNotations.
+Import Init.Datatypes.
 Require Import UnivalentParametricity.theories.Basics UnivalentParametricity.theories.StdLib.Basics.
 
 
@@ -40,13 +41,35 @@ Definition suffix (n : name) s : name :=
   | nNamed id => nNamed (id ++ s)
   end.
 
-
 Definition with_default {A} (d : A) (x : option A) : A :=
   match x with
   | Some x => x
   | None => d
   end.
 
+
+Definition fmap {P} {w : Monad P} {A B} (f : A -> B) (m : P A) : P B :=
+  m >>= fun x => ret (f x).
+
+Definition liftA2 {P} {w : Monad P} {A B C} (f : A -> B -> C) (ma : P A) (mb : P B) : P C :=
+  a <- ma ;;
+  b <- mb ;;
+  ret (f a b).
+
+Infix "$>"  := fmap (at level 10, left associativity).
+Infix "<*>" := (liftA2 id) (at level 10, left associativity).
+
+Fixpoint sequence {P A} `{Monad P} (t : Datatypes.list (P A)) : P (Datatypes.list A) :=
+  match t with
+  | [] => ret []
+  | x :: t => List.cons $> x <*> (sequence t)
+  end.
+Print map.
+
+Instance list_monad : Monad Datatypes.list :=
+  {| ret A a := [a] ;
+     bind A B m f := List.flat_map f m
+  |}.
 
 Fixpoint zip {A B : Type} (ta : Datatypes.list A) (tb : Datatypes.list B) : Datatypes.list (A * B) :=
   match ta, tb with

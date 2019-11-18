@@ -3,11 +3,10 @@ From MetaCoq.Translations Require Import translation_utils.
 Require Import UnivalentParametricity.theories.Basics UnivalentParametricity.theories.StdLib.Basics.
 Require Import UnivalentParametricity.theories.Transportable UnivalentParametricity.translation.utils.
 Import String MonadNotation List Lists.List.ListNotations.
-Require Import String NatBinDefs NatBinALC.
+Require Import String NatBinDefs NatBinALC BinNums.
+
 Import Template.Universes.Level.
 From TypingFlags Require Import Loader.
-
-Set Type In Type.
 
 Close Scope hott_list_scope.
 Open Scope list_scope.
@@ -16,16 +15,17 @@ Open Scope type_scope.
 
 Set Universe Polymorphism.
 
+(* Set Type In Type. *)
 Local Existing Instance config.type_in_type.
 Local Existing Instance default_fuel.
 
 
-Quote Definition tSigma := @sigT.
+(* Quote Definition tSigma := @sigT.
 Quote Definition tPair := @existT.
 Definition pair (typ1 typ2 t1 t2 : term) : term
   := tApp tPair [ typ1 ; typ2 ; t1 ; t2].
 Definition pack (t u : term) : term
-  := tApp tSigma [ t ; u ].
+  := tApp tSigma [ t ; u ]. *)
 
 
 (* nat to NatBin translation table *)
@@ -122,7 +122,7 @@ Fixpoint tsl_rec (fuel : nat) (E : tsl_table) (Σ : global_env_ext) (Γ₁ : con
 
     (* this is undesirable, but for now we cannot do better *)
 
-    ret {| trad := tProd n (trad rA) (tApp (trad rB) [tRel 0])
+    ret {| trad := tProd n (trad rA) (tApp (lift 1 0 (trad rB)) [tRel 0])
           ;  univs := []
                 (* {A A'} {HA : UR A A'} {P : A -> Type} {Q : A' -> Type} (eB : forall x y (H:x ≈ y), P x ⋈ Q y) *)
           ;  w := mkForallUR A (trad rA) (w rA) B' (trad rB) (tApp (<% @forall_from_ur %>) [A; trad rA; w rA; B'; trad rB; w rB])
@@ -188,13 +188,10 @@ Fixpoint tsl_rec (fuel : nat) (E : tsl_table) (Σ : global_env_ext) (Γ₁ : con
   end
   end.
 
-Close Scope type_scope.
-
-
+  
+Open Scope string_scope.
 Inductive ResultType := Term | Witness.
 
-
-Open Scope string_scope.
 Definition convert {A} (ΣE : (global_env * tsl_table)%type) (t : ResultType) (x : A) :=
   p <- tmQuoteRec x ;;
 
@@ -219,10 +216,8 @@ Definition convert {A} (ΣE : (global_env * tsl_table)%type) (t : ResultType) (x
 
 Definition translate {A} (ΣE : (global_env * tsl_table)%type) (name : ident) (x : A) :=
   p <- tmQuoteRec x ;;
-  p' <- tmQuoteRec A ;;
 
-  let term := p.2 in
-  let typ  := p'.2 in 
+  let term := p.2 in 
   let env  := empty_ext (app (fst ΣE) p.1) in
   let E    := snd ΣE in
 
@@ -236,19 +231,10 @@ Definition translate {A} (ΣE : (global_env * tsl_table)%type) (name : ident) (x
   | Success res =>
       (* let t := (pair (trad res') (tLambda nAnon (trad res') (UR_apply (w res') (term) (trad res))) (trad res) (w res)) in
       tmUnquote t >>= tmDefinition name *)
+      (* let t := (pair (tSort fresh_universe) (tLambda nAnon (tSort fresh_universe) (tProd nAnon (tRel 0) (tSort fresh_universe)))
+                (trad res) (w res)) in
+      tmUnquote t >>= tmDefinition name *)
       tmPrint (w res) ;;
       tmMkDefinition name (trad res) ;;
       tmMkDefinition (name ++ "_ur") (w res)
   end.
-
-(* EXAMPLE *)
-
-Unset Strict Unquote Universe Mode.
-
-Parameter f : nat -> nat.
-Parameter x : nat.
-
-Run TemplateProgram (translate tsl_nat_N "poly" (fun (x : nat) => x)).
-Check (poly_ur : (fun (x : nat) => x) ≈ poly).
-
-Run TemplateProgram (translate tsl_nat_N "test" (f 5)).
