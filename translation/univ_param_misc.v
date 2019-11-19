@@ -4,6 +4,7 @@ Require Import UnivalentParametricity.theories.Basics UnivalentParametricity.the
 Require Import UnivalentParametricity.theories.Transportable UnivalentParametricity.translation.utils.
 Import String MonadNotation List Lists.List.ListNotations.
 Require Import String NatBinDefs NatBinALC BinNums.
+Require Import BinNat.
 
 Import Template.Universes.Level.
 From TypingFlags Require Import Loader.
@@ -195,8 +196,6 @@ Inductive ResultType := Term | Witness.
 Definition convert {A} (ΣE : (global_env * tsl_table)%type) (t : ResultType) (x : A) :=
   p <- tmQuoteRec x ;;
 
-  tmPrint p ;;
-
   let term := p.2 in
   let env := empty_ext (app (fst ΣE) p.1) in
   let E := snd ΣE in
@@ -211,6 +210,7 @@ Definition convert {A} (ΣE : (global_env * tsl_table)%type) (t : ResultType) (x
   | Success rt =>
       tmPrint "obtained translation: " ;;
       t <- tmEval all (match t with Term => trad rt | Witness => (w rt) end);;
+      tmPrint t ;;
       tmUnquote t >>= tmPrint
   end.
 
@@ -238,3 +238,23 @@ Definition translate {A} (ΣE : (global_env * tsl_table)%type) (name : ident) (x
       tmMkDefinition name (trad res) ;;
       tmMkDefinition (name ++ "_ur") (w res)
   end.
+
+Unset Strict Unquote Universe Mode.
+
+
+Run TemplateProgram (convert tsl_nat_N Witness (5)).
+Run TemplateProgram (convert tsl_nat_N Witness (5 + 5)%nat).
+
+Set Printing Universes.
+
+Definition t := (fun (x₁ : nat) (x₂ : N) (xᵣ : @ur nat N (compat_nat_N.(Ur)) x₁ x₂) => compat_add x₁ x₂ xᵣ 0 0%N compat_zero).
+Check (t : (fun x : nat => (x + 0)%nat) ≈ (fun x : N => (x + 0)%N)).
+
+Run TemplateProgram (convert tsl_nat_N Witness (fun (x : nat) => (x + 0)%nat)).
+(* Run TemplateProgram (convert tsl_nat_N Witness (forall x, Peano.le 0 x)). *)
+
+Parameter f : nat -> nat.
+Parameter g : nat -> bool -> nat.
+
+(* Run TemplateProgram (convert tsl_nat_N Witness (f 0)). *)
+(* Run TemplateProgram (convert tsl_nat_N Witness (g 0 true)). *)
